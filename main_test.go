@@ -185,6 +185,65 @@ func TestErrResult(t *testing.T) {
 	}
 }
 
+func TestDeleteNote(t *testing.T) {
+	var deletedPath string
+	h := newHandlers(t, func(w http.ResponseWriter, r *http.Request) {
+		deletedPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	})
+	res, _ := h.deleteNote(context.Background(), toolReq(map[string]any{"note_id": "N"}))
+	if res.IsError {
+		t.Fatalf("errored: %s", resultText(t, res))
+	}
+	if deletedPath != "/etapi/notes/N" {
+		t.Errorf("deleted path = %q, want /etapi/notes/N", deletedPath)
+	}
+	res2, _ := h.deleteNote(context.Background(), toolReq(map[string]any{}))
+	if !res2.IsError {
+		t.Error("deleteNote without note_id should error")
+	}
+}
+
+func TestParseLogLevel(t *testing.T) {
+	cases := map[string]logLevel{
+		"off": logOff, "0": logOff, "FALSE": logOff, "no": logOff,
+		"debug": logDebug, "verbose": logDebug, "2": logDebug,
+		"info": logInfo, "": logInfo, "garbage": logInfo,
+	}
+	for in, want := range cases {
+		if got := parseLogLevel(in); got != want {
+			t.Errorf("parseLogLevel(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+func TestLogLevelName(t *testing.T) {
+	for lvl, want := range map[logLevel]string{logOff: "off", logInfo: "info", logDebug: "debug"} {
+		if got := logLevelName(lvl); got != want {
+			t.Errorf("logLevelName(%v) = %q, want %q", lvl, got, want)
+		}
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	if got := truncate("hello", 10); got != "hello" {
+		t.Errorf("truncate(short) = %q, want hello", got)
+	}
+	if got := truncate("hello world", 5); got != "hello…" {
+		t.Errorf("truncate(long) = %q, want 'hello…'", got)
+	}
+}
+
+func TestSummarizeResult(t *testing.T) {
+	if got := summarizeResult(nil, 10); got != "" {
+		t.Errorf("summarizeResult(nil) = %q, want empty", got)
+	}
+	res := mcp.NewToolResultText("line one\nline two")
+	if got := summarizeResult(res, 100); got != "line one line two" {
+		t.Errorf("summarizeResult = %q, want newlines flattened", got)
+	}
+}
+
 func TestBranchID(t *testing.T) {
 	if got := BranchID("parent", "note"); got != "parent_note" {
 		t.Errorf("BranchID = %q, want parent_note", got)
