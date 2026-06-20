@@ -5,13 +5,80 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+// syncBuffer is a goroutine-safe io.Writer wrapping a bytes.Buffer. The stdio
+// server spins up a notification goroutine that may also write to stdout, so a
+// plain bytes.Buffer would race under `go test -race`.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestRun_MissingEnv(t *testing.T) {
+	env := func(string) string { return "" }
+	err := run(context.Background(), env, strings.NewReader(""), &syncBuffer{})
+	if err == nil {
+		t.Fatal("run with no TRILIUM_URL/TOKEN should return an error")
+	}
+	if !strings.Contains(err.Error(), "TRILIUM_URL") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestRun_ServesToolsListThenEOF(t *testing.T) {
+	// Stand-in Trilium so the startup probe (AppInfo) succeeds.
+	trilium := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"appVersion":"test"}`))
+	}))
+	t.Cleanup(trilium.Close)
+
+	env := func(k string) string {
+		switch k {
+		case "TRILIUM_URL":
+			return trilium.URL
+		case "TRILIUM_TOKEN":
+			return "tok"
+		case "TRILIUM_MCP_LOG":
+			return "off"
+		default:
+			return ""
+		}
+	}
+
+	// One JSON-RPC line, then EOF — Listen processes it and returns nil.
+	stdin := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n")
+	var stdout syncBuffer
+
+	if err := run(context.Background(), env, stdin, &stdout); err != nil {
+		t.Fatalf("run returned error: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "create_note") || !strings.Contains(out, "get_note_subtree") {
+		t.Errorf("tools/list response missing expected tools: %s", out)
+	}
+}
 
 // captureLog redirects the standard logger to a buffer for the duration of fn.
 func captureLog(fn func()) string {

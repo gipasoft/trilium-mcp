@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"strconv"
@@ -47,30 +49,39 @@ type handlers struct {
 
 func main() {
 	_ = godotenv.Load()
-	baseURL := os.Getenv("TRILIUM_URL")
-	token := os.Getenv("TRILIUM_TOKEN")
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	log.SetPrefix("[trilium-mcp] ")
+	if err := run(context.Background(), os.Getenv, os.Stdin, os.Stdout); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run wires up the client, MCP server, and stdio transport, then serves until
+// the input stream closes. It takes its environment and streams as parameters
+// (rather than reaching for os.* directly) so the whole startup path is
+// testable without spawning a process or touching real stdio.
+func run(ctx context.Context, getenv func(string) string, stdin io.Reader, stdout io.Writer) error {
+	baseURL := getenv("TRILIUM_URL")
+	token := getenv("TRILIUM_TOKEN")
 	if baseURL == "" || token == "" {
-		log.Fatal("TRILIUM_URL and TRILIUM_TOKEN must be set (via env or .env file)")
+		return errors.New("TRILIUM_URL and TRILIUM_TOKEN must be set (via env or .env file)")
 	}
 
 	timeout := 30 * time.Second
-	if v := os.Getenv("TRILIUM_HTTP_TIMEOUT_SECONDS"); v != "" {
+	if v := getenv("TRILIUM_HTTP_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			timeout = time.Duration(n) * time.Second
 		}
 	}
 
-	lvl := parseLogLevel(os.Getenv("TRILIUM_MCP_LOG"))
-	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
-	log.SetPrefix("[trilium-mcp] ")
-
+	lvl := parseLogLevel(getenv("TRILIUM_MCP_LOG"))
 	h := &handlers{c: NewClient(baseURL, token, timeout), lvl: lvl}
 
 	if lvl != logOff {
 		log.Printf("starting %s v%s — trilium=%s timeout=%s log=%s", serverName, serverVersion, strings.Join(h.c.URLs(), ","), timeout, logLevelName(lvl))
 	}
 
-	probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if _, err := h.c.AppInfo(probeCtx); err != nil {
 		log.Printf("warning: Trilium ETAPI probe failed at startup (%v); tool calls may fail until it recovers", err)
@@ -88,12 +99,13 @@ func main() {
 	// sequences back. Both forms are valid JSON encodings of the same character,
 	// so the receiving client sees identical data.
 	ss := server.NewStdioServer(s)
-	if err := ss.Listen(context.Background(), os.Stdin, &htmlUnescapingWriter{w: os.Stdout}); err != nil {
-		log.Fatalf("server error: %v", err)
+	if err := ss.Listen(ctx, stdin, &htmlUnescapingWriter{w: stdout}); err != nil {
+		return fmt.Errorf("server error: %w", err)
 	}
+	return nil
 }
 
-type htmlUnescapingWriter struct{ w *os.File }
+type htmlUnescapingWriter struct{ w io.Writer }
 
 func (h *htmlUnescapingWriter) Write(p []byte) (int, error) {
 	// p contains the literal 6-byte sequences <, >, & — these are
