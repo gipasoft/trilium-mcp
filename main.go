@@ -665,11 +665,11 @@ func (h *handlers) moveNote(ctx context.Context, req mcp.CallToolRequest) (*mcp.
 		return errResult("move_note: branch attached to new parent (%s) but failed to remove old branch from %s: %v", created.BranchID, fromParent, err)
 	}
 	return okJSON(map[string]any{
-		"note_id":          noteID,
-		"new_parent_id":    newParent,
-		"old_parent_id":    fromParent,
-		"new_branch_id":    created.BranchID,
-		"removed_branch":   BranchID(fromParent, noteID),
+		"note_id":        noteID,
+		"new_parent_id":  newParent,
+		"old_parent_id":  fromParent,
+		"new_branch_id":  created.BranchID,
+		"removed_branch": BranchID(fromParent, noteID),
 	})
 }
 
