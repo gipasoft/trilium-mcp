@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // --- createNote -------------------------------------------------------------
@@ -370,6 +372,80 @@ func TestBatchCreateNotes_RequiresArray(t *testing.T) {
 	res, _ := h.batchCreateNotes(context.Background(), toolReq(map[string]any{"notes": "nope"}))
 	if !res.IsError {
 		t.Error("batchCreateNotes with non-array should error")
+	}
+}
+
+// --- error paths ------------------------------------------------------------
+
+// TestHandlers_PropagateClientErrors drives each handler against a server that
+// always returns HTTP 500, exercising the `if err != nil` branches that the
+// happy-path tests don't reach.
+func TestHandlers_PropagateClientErrors(t *testing.T) {
+	h := newHandlers(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message":"boom"}`))
+	})
+	ctx := context.Background()
+	cases := []struct {
+		name string
+		call func() (*mcp.CallToolResult, error)
+	}{
+		{"createNote", func() (*mcp.CallToolResult, error) {
+			return h.createNote(ctx, toolReq(map[string]any{"title": "T"}))
+		}},
+		{"getNote", func() (*mcp.CallToolResult, error) {
+			return h.getNote(ctx, toolReq(map[string]any{"note_id": "N"}))
+		}},
+		{"getNote_content", func() (*mcp.CallToolResult, error) {
+			return h.getNote(ctx, toolReq(map[string]any{"note_id": "N", "include_content": true}))
+		}},
+		{"updateNote", func() (*mcp.CallToolResult, error) {
+			return h.updateNote(ctx, toolReq(map[string]any{"note_id": "N", "title": "x"}))
+		}},
+		{"appendContent", func() (*mcp.CallToolResult, error) {
+			return h.appendContent(ctx, toolReq(map[string]any{"note_id": "N", "content": "x"}))
+		}},
+		{"deleteNote", func() (*mcp.CallToolResult, error) {
+			return h.deleteNote(ctx, toolReq(map[string]any{"note_id": "N"}))
+		}},
+		{"searchNotes", func() (*mcp.CallToolResult, error) {
+			return h.searchNotes(ctx, toolReq(map[string]any{"query": "#x"}))
+		}},
+		{"addLabel", func() (*mcp.CallToolResult, error) {
+			return h.addLabel(ctx, toolReq(map[string]any{"note_id": "N", "name": "k"}))
+		}},
+		{"addRelation", func() (*mcp.CallToolResult, error) {
+			return h.addRelation(ctx, toolReq(map[string]any{"note_id": "N", "name": "k", "target_note_id": "T"}))
+		}},
+		{"removeAttribute", func() (*mcp.CallToolResult, error) {
+			return h.removeAttribute(ctx, toolReq(map[string]any{"attribute_id": "A"}))
+		}},
+		{"listAttributes", func() (*mcp.CallToolResult, error) {
+			return h.listAttributes(ctx, toolReq(map[string]any{"note_id": "N"}))
+		}},
+		{"moveNote", func() (*mcp.CallToolResult, error) {
+			return h.moveNote(ctx, toolReq(map[string]any{"note_id": "N", "new_parent_id": "P", "from_parent_id": "O"}))
+		}},
+		{"cloneNote", func() (*mcp.CallToolResult, error) {
+			return h.cloneNote(ctx, toolReq(map[string]any{"note_id": "N", "new_parent_id": "P"}))
+		}},
+		{"deleteBranch", func() (*mcp.CallToolResult, error) {
+			return h.deleteBranch(ctx, toolReq(map[string]any{"branch_id": "P_N"}))
+		}},
+		{"getNoteSubtree", func() (*mcp.CallToolResult, error) {
+			return h.getNoteSubtree(ctx, toolReq(map[string]any{"note_id": "N"}))
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, err := c.call()
+			if err != nil {
+				t.Fatalf("handler returned exec error, want tool error result: %v", err)
+			}
+			if !res.IsError {
+				t.Errorf("%s should surface client error as IsError result", c.name)
+			}
+		})
 	}
 }
 

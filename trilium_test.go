@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,17 @@ import (
 	"testing"
 	"time"
 )
+
+func TestTransportErr_ErrorAndUnwrap(t *testing.T) {
+	inner := errors.New("dial tcp: refused")
+	te := transportErr{err: inner}
+	if te.Error() != inner.Error() {
+		t.Errorf("Error() = %q, want %q", te.Error(), inner.Error())
+	}
+	if !errors.Is(te, inner) {
+		t.Error("errors.Is should unwrap transportErr to its inner error")
+	}
+}
 
 func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *httptest.Server) {
 	t.Helper()
