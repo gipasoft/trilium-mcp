@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -397,6 +398,48 @@ func argInt(req mcp.CallToolRequest, name string, def int) int {
 	return def
 }
 
+func argOptionalEnum(req mcp.CallToolRequest, name string, allowed ...string) (string, error) {
+	value, present := req.GetArguments()[name]
+	if !present {
+		return "", nil
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("'%s' must be one of: %s", name, strings.Join(allowed, ", "))
+	}
+	for _, candidate := range allowed {
+		if text == candidate {
+			return text, nil
+		}
+	}
+	return "", fmt.Errorf("'%s' must be one of: %s", name, strings.Join(allowed, ", "))
+}
+
+func argBoundedInt(
+	req mcp.CallToolRequest,
+	name string,
+	defaultValue, min, max int,
+) (int, error) {
+	value, present := req.GetArguments()[name]
+	if !present {
+		return defaultValue, nil
+	}
+	var number float64
+	switch typed := value.(type) {
+	case float64:
+		number = typed
+	case int:
+		number = float64(typed)
+	default:
+		return 0, fmt.Errorf("'%s' must be an integer from %d to %d", name, min, max)
+	}
+	if math.IsNaN(number) || math.IsInf(number, 0) || math.Trunc(number) != number ||
+		number < float64(min) || number > float64(max) {
+		return 0, fmt.Errorf("'%s' must be an integer from %d to %d", name, min, max)
+	}
+	return int(number), nil
+}
+
 func argStringMap(req mcp.CallToolRequest, name string) map[string]string {
 	v, ok := req.GetArguments()[name]
 	if !ok {
@@ -558,26 +601,46 @@ func (h *handlers) searchNotes(ctx context.Context, req mcp.CallToolRequest) (*m
 	if q == "" {
 		return errResult("'query' is required")
 	}
+	orderBy, err := argOptionalEnum(req, "order_by", "dateModified", "utcDateModified")
+	if err != nil {
+		return errResult("%v", err)
+	}
+	orderDirection, err := argOptionalEnum(req, "order_direction", "asc", "desc")
+	if err != nil {
+		return errResult("%v", err)
+	}
+	limit, err := argBoundedInt(req, "limit", 50, 1, 200)
+	if err != nil {
+		return errResult("%v", err)
+	}
 	opts := SearchOpts{
 		Query:           q,
 		AncestorNoteID:  argString(req, "ancestor_note_id"),
 		FastSearch:      argBool(req, "fast_search"),
 		IncludeArchived: argBool(req, "include_archived"),
-		Limit:           argInt(req, "limit", 50),
+		OrderBy:         orderBy,
+		OrderDirection:  orderDirection,
+		Limit:           limit,
 	}
 	notes, err := h.c.SearchNotes(ctx, opts)
 	if err != nil {
 		return errResult("search_notes failed: %v", err)
 	}
 	type slim struct {
-		NoteID     string      `json:"note_id"`
-		Title      string      `json:"title"`
-		Type       string      `json:"type"`
-		Attributes []Attribute `json:"attributes,omitempty"`
+		NoteID          string      `json:"note_id"`
+		Title           string      `json:"title"`
+		Type            string      `json:"type"`
+		Attributes      []Attribute `json:"attributes,omitempty"`
+		DateModified    string      `json:"date_modified,omitempty"`
+		UtcDateModified string      `json:"utc_date_modified,omitempty"`
 	}
 	out := make([]slim, 0, len(notes))
-	for _, n := range notes {
-		out = append(out, slim{NoteID: n.NoteID, Title: n.Title, Type: n.Type, Attributes: n.Attributes})
+	for _, note := range notes {
+		out = append(out, slim{
+			NoteID: note.NoteID, Title: note.Title, Type: note.Type,
+			Attributes: note.Attributes, DateModified: note.DateModified,
+			UtcDateModified: note.UtcModified,
+		})
 	}
 	return okJSON(map[string]any{"count": len(out), "results": out})
 }

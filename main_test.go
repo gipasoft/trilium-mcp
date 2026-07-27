@@ -102,6 +102,50 @@ func TestArgInt(t *testing.T) {
 	}
 }
 
+func TestArgOptionalEnum(t *testing.T) {
+	allowed := []string{"asc", "desc"}
+	if got, err := argOptionalEnum(toolReq(nil), "direction", allowed...); err != nil || got != "" {
+		t.Fatalf("missing arg = %q, %v", got, err)
+	}
+	if got, err := argOptionalEnum(toolReq(map[string]any{"direction": "desc"}), "direction", allowed...); err != nil || got != "desc" {
+		t.Fatalf("valid arg = %q, %v", got, err)
+	}
+	for _, value := range []any{"sideways", float64(1), ""} {
+		if _, err := argOptionalEnum(toolReq(map[string]any{"direction": value}), "direction", allowed...); err == nil {
+			t.Errorf("argOptionalEnum(%#v) accepted invalid value", value)
+		}
+	}
+}
+
+func TestArgBoundedInt(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   any
+		want    int
+		wantErr bool
+	}{
+		{name: "missing uses default", want: 50},
+		{name: "float JSON integer", value: float64(5), want: 5},
+		{name: "native integer", value: 200, want: 200},
+		{name: "fraction", value: 1.5, wantErr: true},
+		{name: "zero", value: float64(0), wantErr: true},
+		{name: "over max", value: float64(201), wantErr: true},
+		{name: "wrong type", value: "5", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := map[string]any{}
+			if tc.value != nil {
+				args["limit"] = tc.value
+			}
+			got, err := argBoundedInt(toolReq(args), "limit", 50, 1, 200)
+			if (err != nil) != tc.wantErr || (!tc.wantErr && got != tc.want) {
+				t.Fatalf("got (%d, %v), want (%d, err=%v)", got, err, tc.want, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestArgStringMap(t *testing.T) {
 	req := toolReq(map[string]any{
 		"labels": map[string]any{

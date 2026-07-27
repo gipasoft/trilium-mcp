@@ -173,32 +173,107 @@ func TestSearchNotes_RequiresQuery(t *testing.T) {
 	}
 }
 
-func TestSearchNotes_OptionMappingAndSlimResult(t *testing.T) {
+func TestSearchNotes_OptionMappingDatesAndOrder(t *testing.T) {
+	var method, path string
 	var q url.Values
 	h := newHandlers(t, func(w http.ResponseWriter, r *http.Request) {
-		q = r.URL.Query()
-		_, _ = w.Write([]byte(`{"results":[{"noteId":"A","title":"a","type":"text"},{"noteId":"B","title":"b","type":"text"}]}`))
+		method, path, q = r.Method, r.URL.Path, r.URL.Query()
+		_, _ = w.Write([]byte(`{"results":[
+			{"noteId":"B","title":"newer","type":"text","dateModified":"2026-07-27 12:00:00.000+0200","utcDateModified":"2026-07-27 10:00:00.000Z"},
+			{"noteId":"A","title":"older","type":"text","dateModified":"2026-07-26 12:00:00.000+0200","utcDateModified":"2026-07-26 10:00:00.000Z"}
+		]}`))
 	})
 	res, _ := h.searchNotes(context.Background(), toolReq(map[string]any{
-		"query":            "#x",
+		"query":            `note.noteId != ""`,
 		"ancestor_note_id": "ROOT",
 		"fast_search":      true,
 		"include_archived": true,
+		"order_by":         "dateModified",
+		"order_direction":  "desc",
 		"limit":            float64(5),
 	}))
 	if res.IsError {
 		t.Fatalf("errored: %s", resultText(t, res))
 	}
-	if q.Get("search") != "#x" || q.Get("ancestorNoteId") != "ROOT" ||
-		q.Get("fastSearch") != "true" || q.Get("includeArchivedNotes") != "true" || q.Get("limit") != "5" {
-		t.Errorf("query mapping wrong: %v", q)
+	if method != http.MethodGet || path != "/etapi/notes" {
+		t.Fatalf("request = %s %s, want GET /etapi/notes", method, path)
 	}
-	var out map[string]any
+	checks := map[string]string{
+		"search": `note.noteId != ""`, "ancestorNoteId": "ROOT",
+		"fastSearch": "true", "includeArchivedNotes": "true",
+		"orderBy": "dateModified", "orderDirection": "desc", "limit": "5",
+	}
+	for key, want := range checks {
+		if got := q.Get(key); got != want {
+			t.Errorf("query[%s] = %q, want %q", key, got, want)
+		}
+	}
+	var out struct {
+		Count   int `json:"count"`
+		Results []struct {
+			NoteID          string `json:"note_id"`
+			DateModified    string `json:"date_modified"`
+			UtcDateModified string `json:"utc_date_modified"`
+		} `json:"results"`
+	}
 	if err := json.Unmarshal([]byte(resultText(t, res)), &out); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if out["count"] != float64(2) {
-		t.Errorf("count = %v, want 2", out["count"])
+	if out.Count != 2 || out.Results[0].NoteID != "B" || out.Results[1].NoteID != "A" {
+		t.Fatalf("order changed: %+v", out.Results)
+	}
+	if out.Results[0].DateModified == "" || out.Results[0].UtcDateModified == "" {
+		t.Fatalf("dates missing: %+v", out.Results[0])
+	}
+}
+
+func TestSearchNotes_QueryOnlyCompatibilityAndMissingDates(t *testing.T) {
+	var q url.Values
+	h := newHandlers(t, func(w http.ResponseWriter, r *http.Request) {
+		q = r.URL.Query()
+		_, _ = w.Write([]byte(`{"results":[{"noteId":"A","title":"a","type":"text"}]}`))
+	})
+	res, _ := h.searchNotes(context.Background(), toolReq(map[string]any{"query": "#x"}))
+	if res.IsError {
+		t.Fatalf("errored: %s", resultText(t, res))
+	}
+	if q.Get("limit") != "50" || q.Has("orderBy") || q.Has("orderDirection") {
+		t.Errorf("compatibility query = %v", q)
+	}
+	text := resultText(t, res)
+	if strings.Contains(text, "date_modified") || strings.Contains(text, "utc_date_modified") {
+		t.Errorf("invented missing dates: %s", text)
+	}
+}
+
+func TestSearchNotes_RejectsInvalidOrderingBeforeHTTP(t *testing.T) {
+	cases := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"order_by", map[string]any{"order_by": "title"}, "order_by"},
+		{"order_direction", map[string]any{"order_direction": "sideways"}, "order_direction"},
+		{"limit zero", map[string]any{"limit": float64(0)}, "limit"},
+		{"limit high", map[string]any{"limit": float64(201)}, "limit"},
+		{"limit fraction", map[string]any{"limit": 1.5}, "limit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			h := newHandlers(t, func(w http.ResponseWriter, r *http.Request) { called = true })
+			args := map[string]any{"query": "#x"}
+			for key, value := range tc.args {
+				args[key] = value
+			}
+			res, _ := h.searchNotes(context.Background(), toolReq(args))
+			if !res.IsError || !strings.Contains(resultText(t, res), tc.want) {
+				t.Fatalf("unexpected result: %s", resultText(t, res))
+			}
+			if called {
+				t.Fatal("invalid arguments reached ETAPI")
+			}
+		})
 	}
 }
 
