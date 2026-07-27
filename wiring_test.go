@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -214,6 +215,30 @@ func TestRegister_SearchNotesOrderingSchema(t *testing.T) {
 	}
 	if !strings.Contains(search.Description, `note.noteId != ""`) {
 		t.Errorf("search_notes description lacks match-all query: %q", search.Description)
+	}
+}
+
+func TestRegister_AdvertisesServerVersion(t *testing.T) {
+	s := server.NewMCPServer(serverName, serverVersion, server.WithToolCapabilities(false))
+	resp := s.HandleMessage(context.Background(), []byte(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}`,
+	))
+	encoded, err := json.Marshal(resp)
+	if err != nil {
+		t.Fatalf("marshal initialize response: %v", err)
+	}
+	var payload struct {
+		Result struct {
+			ServerInfo struct {
+				Version string `json:"version"`
+			} `json:"serverInfo"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("unmarshal initialize response: %v", err)
+	}
+	if payload.Result.ServerInfo.Version != "0.1.6" {
+		t.Fatalf("advertised server version = %q, want 0.1.6", payload.Result.ServerInfo.Version)
 	}
 }
 

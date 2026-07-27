@@ -143,6 +143,23 @@ create_note({
 search_notes({ query: "#status=read #rating>=8", ancestor_note_id: "<id of Books>" })
 ```
 
+To retrieve the most recently modified notes, use a match-all query and let
+ETAPI order before applying the limit:
+
+```jsonc
+search_notes({
+  query: "note.noteId != \"\"",
+  order_by: "dateModified",
+  order_direction: "desc",
+  limit: 5
+})
+```
+
+`order_by` accepts `dateModified` or `utcDateModified`;
+`order_direction` accepts `asc` or `desc`; `limit` is an integer from 1 to 200.
+Results include `date_modified` and `utc_date_modified` when supplied by
+Trilium ETAPI. The server preserves ETAPI order and never invents missing dates.
+
 Flip the parent's view to **Table** (or **Board** by `status`, or **Calendar** by a date label) in the Trilium UI and you have a database without ever leaving notes.
 
 ### Append-only log
