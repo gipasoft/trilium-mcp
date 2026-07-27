@@ -81,6 +81,34 @@ func TestRun_ServesToolsListThenEOF(t *testing.T) {
 	}
 }
 
+func TestRun_StartupLogOmitsEndpointAndToken(t *testing.T) {
+	trilium := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"appVersion":"test"}`))
+	}))
+	t.Cleanup(trilium.Close)
+	env := func(key string) string {
+		switch key {
+		case "TRILIUM_URL":
+			return trilium.URL
+		case "TRILIUM_TOKEN":
+			return "private-token"
+		default:
+			return ""
+		}
+	}
+	output := captureLog(func() {
+		if err := run(context.Background(), env, strings.NewReader(""), &syncBuffer{}); err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	})
+	if strings.Contains(output, trilium.URL) || strings.Contains(output, "private-token") {
+		t.Fatalf("startup log leaked private configuration: %q", output)
+	}
+	if !strings.Contains(output, "endpoints=1") {
+		t.Fatalf("startup log lacks safe endpoint count: %q", output)
+	}
+}
+
 // captureLog redirects the standard logger to a buffer for the duration of fn.
 func captureLog(fn func()) string {
 	var buf bytes.Buffer

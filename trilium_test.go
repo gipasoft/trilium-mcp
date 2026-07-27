@@ -13,14 +13,35 @@ import (
 	"time"
 )
 
-func TestTransportErr_ErrorAndUnwrap(t *testing.T) {
-	inner := errors.New("dial tcp: refused")
+func TestTransportErr_ErrorIsSanitizedAndUnwraps(t *testing.T) {
+	inner := errors.New("Get \"http://private.example/etapi/notes?token=secret\": refused")
 	te := transportErr{err: inner}
-	if te.Error() != inner.Error() {
-		t.Errorf("Error() = %q, want %q", te.Error(), inner.Error())
+	if te.Error() != "trilium transport error" {
+		t.Errorf("Error() = %q", te.Error())
 	}
 	if !errors.Is(te, inner) {
 		t.Error("errors.Is should unwrap transportErr to its inner error")
+	}
+}
+
+func TestClient_FallbackLogOmitsEndpointAndTransportDetail(t *testing.T) {
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"appVersion":"x"}`))
+	}))
+	t.Cleanup(good.Close)
+	privateURL := "http://127.0.0.1:1/private"
+	c := NewClient(privateURL+","+good.URL, "tok", 2*time.Second)
+	output := captureLog(func() {
+		if _, err := c.AppInfo(context.Background()); err != nil {
+			t.Fatalf("AppInfo: %v", err)
+		}
+	})
+	if strings.Contains(output, privateURL) || strings.Contains(output, good.URL) ||
+		strings.Contains(strings.ToLower(output), "refused") {
+		t.Fatalf("failover log leaked endpoint detail: %q", output)
+	}
+	if !strings.Contains(output, "endpoint 1 unreachable") {
+		t.Fatalf("missing safe failover message: %q", output)
 	}
 }
 

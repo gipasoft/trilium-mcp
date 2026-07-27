@@ -106,7 +106,7 @@ type SearchResponse struct {
 // are not transportErr — they're real responses and a different URL won't help.
 type transportErr struct{ err error }
 
-func (e transportErr) Error() string { return e.err.Error() }
+func (e transportErr) Error() string { return "trilium transport error" }
 func (e transportErr) Unwrap() error { return e.err }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
@@ -185,7 +185,7 @@ func (c *Client) tryURLs(fn func(base string) error) error {
 		if errors.As(err, &te) {
 			lastErr = err
 			if i+1 < len(c.urls) {
-				log.Printf("trilium: %s unreachable (%v); trying next URL", base, te.err)
+				log.Printf("trilium: endpoint %d unreachable; trying next endpoint", i+1)
 			}
 			continue
 		}

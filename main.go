@@ -79,7 +79,8 @@ func run(ctx context.Context, getenv func(string) string, stdin io.Reader, stdou
 	h := &handlers{c: NewClient(baseURL, token, timeout), lvl: lvl}
 
 	if lvl != logOff {
-		log.Printf("starting %s v%s — trilium=%s timeout=%s log=%s", serverName, serverVersion, strings.Join(h.c.URLs(), ","), timeout, logLevelName(lvl))
+		log.Printf("starting %s v%s — endpoints=%d timeout=%s log=%s",
+			serverName, serverVersion, len(h.c.URLs()), timeout, logLevelName(lvl))
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
