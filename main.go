@@ -240,13 +240,21 @@ func (h *handlers) register(s *server.MCPServer) {
 	), h.withLogging("delete_note", h.deleteNote))
 
 	s.AddTool(mcp.NewTool("search_notes",
-		mcp.WithDescription("Search notes using Trilium search syntax (e.g. '#tag', '#status=active', '\"foo bar\"', 'note.title %= \"^Re\"'). Returns up to 'limit' results."),
+		mcp.WithDescription("Search notes using Trilium search syntax (e.g. '#tag', '#status=active', '\"foo bar\"', 'note.title %= \"^Re\"'). Use 'note.noteId != \"\"' to match all notes. ETAPI applies ordering and returns up to 'limit' results."),
 		mcp.WithToolAnnotation(readOnly),
-		mcp.WithString("query", mcp.Required(), mcp.Description("Trilium search expression")),
+		mcp.WithString("query", mcp.Required(), mcp.Description("Non-empty Trilium search expression; use 'note.noteId != \"\"' to match all notes")),
 		mcp.WithString("ancestor_note_id", mcp.Description("Scope the search to one subtree — only notes that are descendants of this note are returned. This is the correct way to limit search to a 'folder' like '🔧 Runbooks'.")),
 		mcp.WithBoolean("fast_search", mcp.Description("Skip full-text body scan, search metadata only (default false)")),
 		mcp.WithBoolean("include_archived", mcp.Description("Include archived notes (default false)")),
-		mcp.WithNumber("limit", mcp.Description("Max results (default 50)")),
+		mcp.WithString("order_by",
+			mcp.Description("Order results by modification date"),
+			mcp.Enum("dateModified", "utcDateModified")),
+		mcp.WithString("order_direction",
+			mcp.Description("Order direction"),
+			mcp.Enum("asc", "desc")),
+		mcp.WithNumber("limit",
+			mcp.Description("Max results (default 50; integer from 1 to 200)"),
+			mcp.Min(1), mcp.Max(200), mcp.MultipleOf(1), mcp.DefaultNumber(50)),
 	), h.withLogging("search_notes", h.searchNotes))
 
 	s.AddTool(mcp.NewTool("add_label",

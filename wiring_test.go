@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -134,6 +135,57 @@ func TestRegister_AddsAllTools(t *testing.T) {
 	}
 	if a := got["delete_note"].Annotations; a.DestructiveHint == nil || !*a.DestructiveHint {
 		t.Error("delete_note should carry a destructive annotation")
+	}
+}
+
+func schemaProperty(t *testing.T, tool mcp.Tool, name string) map[string]any {
+	t.Helper()
+	value, ok := tool.InputSchema.Properties[name]
+	if !ok {
+		t.Fatalf("%s schema missing property %q", tool.Name, name)
+	}
+	property, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("%s property %q has type %T", tool.Name, name, value)
+	}
+	return property
+}
+
+func TestRegister_SearchNotesOrderingSchema(t *testing.T) {
+	h := &handlers{c: NewClient("http://localhost", "tok", 0), lvl: logOff}
+	s := server.NewMCPServer(serverName, serverVersion, server.WithToolCapabilities(false))
+	h.register(s)
+
+	resp := s.HandleMessage(context.Background(), []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	jr := resp.(mcp.JSONRPCResponse)
+	tools := jr.Result.(mcp.ListToolsResult).Tools
+
+	var search mcp.Tool
+	for _, tool := range tools {
+		if tool.Name == "search_notes" {
+			search = tool
+			break
+		}
+	}
+	if search.Name == "" {
+		t.Fatal("search_notes not registered")
+	}
+
+	orderBy := schemaProperty(t, search, "order_by")
+	if got := orderBy["enum"]; !reflect.DeepEqual(got, []string{"dateModified", "utcDateModified"}) {
+		t.Errorf("order_by enum = %#v", got)
+	}
+	direction := schemaProperty(t, search, "order_direction")
+	if got := direction["enum"]; !reflect.DeepEqual(got, []string{"asc", "desc"}) {
+		t.Errorf("order_direction enum = %#v", got)
+	}
+	limit := schemaProperty(t, search, "limit")
+	if limit["minimum"] != float64(1) || limit["maximum"] != float64(200) ||
+		limit["multipleOf"] != float64(1) || limit["default"] != float64(50) {
+		t.Errorf("limit schema = %#v", limit)
+	}
+	if !strings.Contains(search.Description, `note.noteId != ""`) {
+		t.Errorf("search_notes description lacks match-all query: %q", search.Description)
 	}
 }
 
